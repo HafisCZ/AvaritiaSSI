@@ -7,75 +7,43 @@ using System.Threading.Tasks;
 
 namespace Avaritia
 {
-    public interface ISQLRecord
-    {
-
-    }
-
     public class SQLMapper
     {
-        private class SQLVirtualMap : Dictionary<String, SQLVirtualTable>
+        public class SQLVirtualMap : Dictionary<String, SQLVirtualTable>
         {
+            public new SQLVirtualTable this[string key] {
+                set {
+                    value.Label = key;
+                    base[key] = value;
+                }
+                get {
+                    return base[key];
+                }
+            }
         }
 
-        private class SQLVirtualTable : Dictionary<String, SQLVirtualColumn>
+        public class SQLVirtualTable : Dictionary<int, Tuple<string, string>>
         {
             public String Label { get; set; }
 
-            public SQLVirtualColumn this[int ordinal] {
+            private String[] m_headers = null;
+
+            public String[] Headers {
                 get {
-                    foreach (KeyValuePair<string, SQLVirtualColumn> kvp in this) {
-                        if (kvp.Value.Ordinal == ordinal) {
-                            return kvp.Value;
+                    if (m_headers == null) {
+                        m_headers = new String[Count];
+                        foreach (KeyValuePair<int, Tuple<string, string>> kvp in this) {
+                            m_headers[kvp.Key] = kvp.Value.Item1;
                         }
                     }
 
-                    return null;
-                }
-            }
-
-            public SQLVirtualColumn[] Headers {
-                get {
-                    SQLVirtualColumn[] sqlvc = new SQLVirtualColumn[Count];
-                    foreach (KeyValuePair<string, SQLVirtualColumn> kvp in this) {
-                        sqlvc[kvp.Value.Ordinal - 1] = kvp.Value;
-                    }
-
-                    return sqlvc;
-                }
-            }
-        }
-
-        private class SQLVirtualColumn
-        {
-            public String Label { get; set; }
-            public Type Datatype { get; set; }
-            public int Ordinal { get; set; }
-            public bool AllowNull { get; set; }
-            public int? MaxLength { get; set; }
-
-            public static SQLVirtualColumn ParseISCRecord(object[] record) {
-                return new SQLVirtualColumn {
-                    Label = record[3] as String,
-                    Ordinal = record[4] as int? ?? 0,
-                    AllowNull = record[6] as bool? ?? false,
-                    MaxLength = record[8] as int?,
-                    Datatype = ParseType(record[7] as String)
-                };
-            }
-
-            private static Type ParseType(string type) {
-                switch (type) {
-                    case "int": return typeof(int);
-                    case "varchar": return typeof(String);
-                    case "date": return typeof(DateTime);
-                    default: return null;
+                    return m_headers;
                 }
             }
         }
 
         internal SQLHook Hook { get; private set; }
-        private SQLVirtualMap VirtualMap { get; set; }
+        internal SQLVirtualMap VirtualMap { get; set; }
 
         public SQLMapper(SQLHook sqlh) {
             Hook = sqlh;
@@ -99,12 +67,8 @@ namespace Avaritia
 
                     SQLRequest crequest = new SQLRequest { Request = String.Format("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{0}'", tablename) };
                     Hook.Fetch(ref crequest);
-                    crequest.Response.ForEach(
-                        column => {
-                            SQLVirtualColumn vcolumn = SQLVirtualColumn.ParseISCRecord(column);
-                            vtable[vcolumn.Label] = vcolumn;
-                        }
-                    );
+
+                    crequest.Response.ForEach( column => vtable[(column[4] as int? ?? 0) - 1] = new Tuple<string, string>(column[3] as String, column[7] as String) );
 
                     map[tablename] = vtable;
                 }
@@ -114,21 +78,39 @@ namespace Avaritia
         }
 
         public void Fetch<T>(ref List<T> records, String table, params String[] columns) where T : ISQLRecord, new() {
-            SQLRequest sqlr = new SQLRequest { Request = String.Format("SELECT {0} FROM {1}", String.Join(", ", columns), table) };
+            String[] expandedColumns = (columns.Length < 1 ? VirtualMap[table].Headers : columns);
+
+            SQLRequest sqlr = new SQLRequest { Request = String.Format("SELECT {0} FROM {1}", String.Join(", ", expandedColumns), table) };
             Hook.Fetch(ref sqlr);
-
+            
             foreach (object[] r in sqlr.Response) {
-                T record = new T();
+                T record = new T { SourceTable = table, Mapper = this };
                 PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(record);
-
-                for (int i = 0; i < r.Length; i++) {
-                    PropertyDescriptor pd = pdc.Find(columns[i], false);
-                    if (pd != null) {
-                        pd.SetValue(record, r[i]);
+                
+                if (record is SQLAnonymousRecord) {
+                    for (int i = 0; i < r.Length; i++) {
+                        (record as SQLAnonymousRecord).AddProperty(expandedColumns[i], r[i]);
+                    }
+                } else {
+                    for (int i = 0; i < r.Length; i++) {
+                        PropertyDescriptor pd = pdc.Find(expandedColumns[i], false);
+                        if (pd != null) {
+                            pd.SetValue(record, r[i]);
+                        }
                     }
                 }
 
                 records.Add(record);
+            }
+        }
+
+        public void ShowVirtualMap()
+        {
+            foreach (KeyValuePair<string, SQLVirtualTable> kvp in VirtualMap) {
+                Console.WriteLine(String.Format("\nTABLE: {0}\n", kvp.Key));
+                foreach (KeyValuePair<int, Tuple<string, string>> kvp2 in kvp.Value) {
+                    Console.WriteLine(String.Format("{0,10}{1,10}{2,20}", kvp2.Key, kvp2.Value.Item2, kvp2.Value.Item1));
+                }
             }
         }
     }

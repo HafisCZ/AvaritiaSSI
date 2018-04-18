@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Data.SqlClient;
 using System.Data;
+using System.ComponentModel;
 
 namespace Avaritia
 {
@@ -23,8 +24,14 @@ namespace Avaritia
 
     public class SQLRequest
     {
-        public string Request { get; set; }
-        public List<object[]> Response { get; set; }
+        public String Request { get; set; }
+        public int RowsAffected { get; set; }
+        public List<object[]> Response { get; internal set; }
+    }
+
+    public class SQLSyncRequest
+    {
+        public List<ISQLRecord> Records { get; set; }
     }
 
     public class SQLHook : IDisposable
@@ -44,6 +51,30 @@ namespace Avaritia
             SQLConnection.Dispose();
         }
 
+        public void Sync(SQLSyncRequest request)
+        {
+            if (SQLConnection.State != ConnectionState.Open) {
+                throw new Exception("SQLNotConnectedException");
+            }
+
+            foreach (ISQLRecord isqlr in request.Records) {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendFormat("UPDATE {0} SET ", isqlr.SourceTable);
+
+                PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(isqlr);
+                String[] headers = isqlr.Mapper.VirtualMap[isqlr.SourceTable].Headers;
+
+                // TODO
+
+                sb.AppendFormat("WHERE 1=1");
+                Console.WriteLine(sb.ToString());
+
+                using (SqlCommand sqlc = new SqlCommand(sb.ToString(), SQLConnection)) {
+                    sqlc.ExecuteNonQuery();
+                }
+            }
+        }
+
         public void Fetch(ref SQLRequest request, CommandBehavior behaviour = CommandBehavior.SequentialAccess) {
             if (SQLConnection.State != ConnectionState.Open) {
                 throw new Exception("SQLNotConnectedException");
@@ -52,6 +83,8 @@ namespace Avaritia
             using (SqlCommand sqlc = new SqlCommand(request.Request, SQLConnection))
             using (SqlDataReader sqldr = sqlc.ExecuteReader(behaviour)) {
                 request.Response = new List<object[]>();
+                request.RowsAffected = sqldr.RecordsAffected;
+
                 while (sqldr.Read()) {
                     object[] record = new object[sqldr.FieldCount];
                     sqldr.GetValues(record);
