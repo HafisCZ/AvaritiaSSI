@@ -14,49 +14,39 @@ namespace Avaritia
         public string Database { get; set; }
         public string TrustedConnection { get; set; }
 
-        public string String
-        {
+        public string String {
             get {
-                StringBuilder builder = new StringBuilder();
-
-                if (Server != null) builder.AppendFormat("Server={0};", Server);
-                if (Database != null) builder.AppendFormat("Database={0};", Database);
-                if (TrustedConnection != null) builder.AppendFormat("Trusted_Connection={0};", TrustedConnection);
-
-                return builder.ToString();
+                return String.Format("Server={0};Database={1};Trusted_Connection={2}", Server, Database, TrustedConnection);
             }
         }
     }
 
     public class SQLRequest
     {
-        public List<object[]> Response { get; set; } = null;
-        public string Request { get; set; } = null;
+        public string Request { get; set; }
+        public List<object[]> Response { get; set; }
     }
 
     public class SQLHook : IDisposable
     {
-        private SqlConnection SQLConnection { get; set; }
+        internal SqlConnection SQLConnection { get; set; }
 
-        public SQLHook(SQLConnectionString sqlcs)
-        {
+        public SQLHook(SQLConnectionString sqlcs) {
             SQLConnection = new SqlConnection(sqlcs.String);
             SQLConnection.Open();
 
             if (SQLConnection.State != ConnectionState.Open) {
-                throw new SQLNotConnectedException();
+                throw new Exception("SQLNotConnectedException");
             }
         }
 
-        public void Dispose()
-        {
+        public void Dispose() {
             SQLConnection.Dispose();
         }
 
-        public void Read(ref SQLRequest request, CommandBehavior behaviour = CommandBehavior.SequentialAccess)
-        {
+        public void Fetch(ref SQLRequest request, CommandBehavior behaviour = CommandBehavior.SequentialAccess) {
             if (SQLConnection.State != ConnectionState.Open) {
-                throw new SQLNotConnectedException();
+                throw new Exception("SQLNotConnectedException");
             }
 
             using (SqlCommand sqlc = new SqlCommand(request.Request, SQLConnection))
