@@ -7,44 +7,31 @@ using System.Threading.Tasks;
 
 namespace Avaritia
 {
-    public interface ISQLRecord
+    public interface ISqlUserRecord
     {
-        String SourceTable { get; set; }
-        SQLMapper Mapper { get; set; }
+        String GetTableLabel();
     }
 
-    public class SQLUserRecord : ISQLRecord
+    public class SqlDynamicRecord : DynamicObject
     {
-        public String SourceTable { get; set; }
-        public SQLMapper Mapper { get; set; }
-    }
+        private readonly Dictionary<String, Object> properties = new Dictionary<String, Object>();
 
-    public sealed class SQLAnonymousRecord : DynamicObject, ISQLRecord
-    {
-        public String SourceTable { get; set; }
-        public SQLMapper Mapper { get; set; }
+        public String TableName { get; }
 
-        private readonly Dictionary<String, object> m_properties = new Dictionary<string, object>();
-
-        public void AddProperty(string propertyName, object value)
-        {
-            m_properties[propertyName] = value;
+        public Object this[String property] {
+            internal set => properties[property] = value;
+            get => properties[property];
         }
 
-        public override IEnumerable<String> GetDynamicMemberNames()
-        {
-            return m_properties.Keys;
-        }
-
-        public override bool TryGetMember(GetMemberBinder binder, out object result)
-        {
-            return m_properties.TryGetValue(binder.Name, out result);
-        }
+        public SqlDynamicRecord(String table) : base() => TableName = table;
+        public override IEnumerable<String> GetDynamicMemberNames() => properties.Keys;
+        public Boolean HasProperty(String property) => properties.ContainsKey(property);
+        public override bool TryGetMember(GetMemberBinder binder, out object result) => properties.TryGetValue(binder.Name, out result);
 
         public override bool TrySetMember(SetMemberBinder binder, object value)
         {
-            if (m_properties.ContainsKey(binder.Name)) {
-                m_properties[binder.Name] = value;
+            if (properties.ContainsKey(binder.Name)) {
+                properties[binder.Name] = value;
                 return true;
             } else {
                 return false;

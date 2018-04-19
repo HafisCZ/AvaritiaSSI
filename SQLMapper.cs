@@ -1,117 +1,171 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Data.SqlClient;
+using System.Dynamic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Avaritia
 {
-    public class SQLMapper
+    public class SqlMapper
     {
-        public class SQLVirtualMap : Dictionary<String, SQLVirtualTable>
+        internal SqlConnector SqlConnector { get; private set; }
+        internal SqlDatabasePattern SqlDatabasePattern { get; private set; }
+
+        public SqlMapper(SqlConnector sqlc, String tpref = null) {
+            SqlConnector = sqlc;
+            SqlDatabasePattern = GetDatabasePattern(sqlc, tpref);
+        }
+
+        internal static SqlDatabasePattern GetDatabasePattern(SqlConnector sqlc, String tpref)
         {
-            public new SQLVirtualTable this[string key] {
-                set {
-                    value.Label = key;
-                    base[key] = value;
-                }
-                get {
-                    return base[key];
-                }
+            SqlDatabasePattern sqldp = new SqlDatabasePattern();
+            ISqlRequest request = SqlNonQuerryRequest.MakeTableDefinitionRequest(tpref);
+            SqlConnector.Execute(sqlc, ref request);
+
+            foreach (Object[] row in (request as SqlQuerryRequest).Response) {
+                sqldp[row[0] as String] = new SqlTablePattern { Label = row[0] as String };
             }
+
+            request = SqlNonQuerryRequest.MakeColumnDefinitionRequest(tpref);
+            SqlConnector.Execute(sqlc, ref request);
+
+            foreach (Object[] row in (request as SqlQuerryRequest).Response) {
+                sqldp[row[0] as String][row[1] as String] = new SqlColumnData {
+                    Label = row[1] as String,
+                    Ordinal = (row[2] as Int32? ?? 0) - 1,
+                    Default = row[3],
+                    AllowNull = row[4] as Boolean? ?? false,
+                    Type = row[5] as String,
+                    Length = row[6] as Int32?
+                };
+            }
+
+            ISqlRequest sqlqrP = SqlNonQuerryRequest.MakeTableConstraintRequest();
+            SqlConnector.Execute(sqlc, ref sqlqrP);
+            foreach (Object[] o in (sqlqrP as SqlQuerryRequest).Response) {
+                sqldp[o[0] as String][o[1] as String].PrimaryKey = o[2] as String == "PRIMARY KEY";
+                sqldp[o[0] as String][o[1] as String].ForeignKey = o[2] as String == "FOREIGN KEY";
+            }
+
+            SqlDatabasePattern.MakeTables(ref sqldp);
+            return sqldp;
         }
 
-        public class SQLVirtualTable : Dictionary<int, Tuple<string, string>>
+        public static void Select<Type>(SqlMapper sqlm, out List<Type> list, String table, params String[] cols) where Type : ISqlUserRecord, new() => Select(sqlm, out list, table, null, cols);
+        public static void Select<Type>(SqlMapper sqlm, out List<Type> list, String table, String where, params String[] cols) where Type : ISqlUserRecord, new()
         {
-            public String Label { get; set; }
+            String[] header = cols.Length > 0 ? sqlm.SqlDatabasePattern[table].Headers : cols;
+            ISqlRequest sqlqr = SqlNonQuerryRequest.MakeSelectRequest(table, header, where);
+            SqlConnector.Execute(sqlm.SqlConnector, ref sqlqr);
 
-            private String[] m_headers = null;
+            list = new List<Type>();
 
-            public String[] Headers {
-                get {
-                    if (m_headers == null) {
-                        m_headers = new String[Count];
-                        foreach (KeyValuePair<int, Tuple<string, string>> kvp in this) {
-                            m_headers[kvp.Key] = kvp.Value.Item1;
-                        }
-                    }
+            foreach (Object[] row in (sqlqr as SqlQuerryRequest).Response) {
+                Type sqlur = new Type();
 
-                    return m_headers;
-                }
-            }
-        }
-
-        internal SQLHook Hook { get; private set; }
-        internal SQLVirtualMap VirtualMap { get; set; }
-
-        public SQLMapper(SQLHook sqlh) {
-            Hook = sqlh;
-
-            try {
-                VirtualMap = Map();
-            } catch (Exception) {
-                throw new Exception("SQLCannotCreateVirtualMapException");
-            }
-        }
-
-        private SQLVirtualMap Map() {
-            SQLVirtualMap map = new SQLVirtualMap();
-
-            SQLRequest trequest = new SQLRequest { Request = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE 'table_%'" };
-            Hook.Fetch(ref trequest);
-            trequest.Response.ForEach(
-                table => {
-                    String tablename = table[0].ToString();
-                    SQLVirtualTable vtable = new SQLVirtualTable { Label = tablename };
-
-                    SQLRequest crequest = new SQLRequest { Request = String.Format("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{0}'", tablename) };
-                    Hook.Fetch(ref crequest);
-
-                    crequest.Response.ForEach( column => vtable[(column[4] as int? ?? 0) - 1] = new Tuple<string, string>(column[3] as String, column[7] as String) );
-
-                    map[tablename] = vtable;
-                }
-            );
-
-            return map;
-        }
-
-        public void Fetch<T>(ref List<T> records, String table, params String[] columns) where T : ISQLRecord, new() {
-            String[] expandedColumns = (columns.Length < 1 ? VirtualMap[table].Headers : columns);
-
-            SQLRequest sqlr = new SQLRequest { Request = String.Format("SELECT {0} FROM {1}", String.Join(", ", expandedColumns), table) };
-            Hook.Fetch(ref sqlr);
-            
-            foreach (object[] r in sqlr.Response) {
-                T record = new T { SourceTable = table, Mapper = this };
-                PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(record);
-                
-                if (record is SQLAnonymousRecord) {
-                    for (int i = 0; i < r.Length; i++) {
-                        (record as SQLAnonymousRecord).AddProperty(expandedColumns[i], r[i]);
-                    }
-                } else {
-                    for (int i = 0; i < r.Length; i++) {
-                        PropertyDescriptor pd = pdc.Find(expandedColumns[i], false);
-                        if (pd != null) {
-                            pd.SetValue(record, r[i]);
-                        }
+                PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(sqlur);
+                for (Int32 ordinal = 0; ordinal < row.Length; ordinal++) {
+                    PropertyDescriptor pd = pdc.Find(header[ordinal], false);
+                    if (pd != null) {
+                        pd.SetValue(sqlur, row[ordinal]);
                     }
                 }
 
-                records.Add(record);
+                list.Add(sqlur);
             }
         }
 
-        public void ShowVirtualMap()
-        {
-            foreach (KeyValuePair<string, SQLVirtualTable> kvp in VirtualMap) {
-                Console.WriteLine(String.Format("\nTABLE: {0}\n", kvp.Key));
-                foreach (KeyValuePair<int, Tuple<string, string>> kvp2 in kvp.Value) {
-                    Console.WriteLine(String.Format("{0,10}{1,10}{2,20}", kvp2.Key, kvp2.Value.Item2, kvp2.Value.Item1));
+        public static void Select(SqlMapper sqlm, out List<SqlDynamicRecord> list, String table, params String[] cols) {
+            String[] header = cols.Length > 0 ? cols : sqlm.SqlDatabasePattern[table].Headers;
+            ISqlRequest sqlqr = SqlNonQuerryRequest.MakeSelectRequest(table, header);
+            SqlConnector.Execute(sqlm.SqlConnector, ref sqlqr);
+
+            list = new List<SqlDynamicRecord>();
+
+            foreach (Object[] row in (sqlqr as SqlQuerryRequest).Response) {
+                SqlDynamicRecord dr = new SqlDynamicRecord(table);
+
+                for (Int32 ordinal = 0; ordinal < row.Length; ordinal++) {
+                    dr[header[ordinal]] = row[ordinal];
+                }
+
+                list.Add(dr);
+            }
+        }
+
+        public static void Update<Type>(SqlMapper sqlm, ref List<Type> list, String table) where Type : ISqlUserRecord {
+            String[] headers = sqlm.SqlDatabasePattern[table].Headers;
+
+            // TODO
+        }
+
+        public static void Update(SqlMapper sqlm, ref List<SqlDynamicRecord> list, String table) {
+            String[] headers = sqlm.SqlDatabasePattern[table].Headers;
+
+            // TODO
+        }
+
+        public static void Insert<Type>(SqlMapper sqlm, Type record) where Type : ISqlUserRecord {
+            String[] headers = sqlm.SqlDatabasePattern[record.GetTableLabel()].Headers;
+
+            Dictionary<String, String> values = new Dictionary<String, String>();
+            PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(record);
+
+            foreach (String header in headers) {
+                PropertyDescriptor descriptor = pdc.Find(header, false);
+                if (descriptor != null) {
+                    Object value = descriptor.GetValue(record);
+                    if (value != null || sqlm.SqlDatabasePattern[record.GetTableLabel()][header].AllowNull) {
+                        values[descriptor.Name] = value as String ?? "Null";
+                    } else if (sqlm.SqlDatabasePattern[record.GetTableLabel()][header].Default != null) {
+                        values[descriptor.Name] = sqlm.SqlDatabasePattern[record.GetTableLabel()][header].Default as String;
+                    }
+
+                    values[descriptor.Name] = String.Format("'{0}'", descriptor.GetValue(record));
                 }
             }
+
+            ISqlRequest sqlr = new SqlNonQuerryRequest {
+                Request = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", record.GetTableLabel(), String.Join(",", values.Keys.ToArray()), String.Join(",", values.Values.ToArray()))
+            };
+
+            SqlConnector.Execute(sqlm.SqlConnector, ref sqlr);
+        }
+
+        public static void Insert(SqlMapper sqlm, SqlDynamicRecord record, String table) {
+            String[] headers = sqlm.SqlDatabasePattern[table].Headers;
+
+            Dictionary<String, String> values = new Dictionary<String, String>();
+
+            foreach (String header in headers) {
+                if(record.HasProperty(header)) {
+                    values[header] = String.Format("'{0}'", record[header]);
+                }
+            }
+
+            ISqlRequest sqlr = new SqlNonQuerryRequest {
+                Request = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", table, String.Join(",", values.Keys.ToArray()), String.Join(",", values.Values.ToArray()))
+            };
+
+            SqlConnector.Execute(sqlm.SqlConnector, ref sqlr);
+        }
+
+        public static String GetPattern(SqlMapper sqlm) {
+            StringBuilder sb = new StringBuilder();
+
+            foreach (KeyValuePair<String, SqlTablePattern> tp in sqlm.SqlDatabasePattern) {
+                sb.AppendFormat("[{0,-5}{1,-30}{2,-10}{3,-10}{4,-20}{5,-10}] {6}\n", "ORD", "NAME", "TYPE", "NULL", "PRIMARY", "FOREING", tp.Key);
+                foreach (KeyValuePair<String, SqlColumnData> cp in tp.Value) {
+                    SqlColumnData cd = cp.Value;
+                    sb.AppendFormat("[{0,-5}{1,-30}{2,-10}{3,-10}{4,-20}{5,-10}]\n", cd.Ordinal, cd.Label, cd.Type, cd.AllowNull, cd.PrimaryKey, cd.ForeignKey);
+                }
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
         }
     }
 }
