@@ -1,86 +1,131 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using System.Data.SqlClient;
-using System.Data;
 
 namespace Avaritia
 {
-    public class SqlConnector : IDisposable
+    public sealed class SqlConnector : IDisposable
     {
-        public Boolean Debug { get; set; }
-        internal SqlConnection Connection { get; private set; }
-        internal SqlTransaction Transaction { get; private set; }
+        internal const CommandBehavior DEFAULT_BEHAVIOUR = CommandBehavior.SequentialAccess;
 
-        public SqlConnector(SqlConnectionString connectionString, Boolean debug = false) {
-            Connection = new SqlConnection(connectionString.ToString());
-            Debug = debug;
+        private SqlConnection Connection { get; }
+        private SqlTransaction Transaction { get; set; }
+
+        internal SqlConnector(String connectionString)
+        {
+            Connection = new SqlConnection(connectionString);
+            Connection.Open();
+            Logger.Log(Logger.CONNECTION_OPEN + connectionString);
         }
 
-        public void Dispose() => Connection.Dispose();
-        public void Open() => Connection.Open();
-        public void Close() => Connection.Close();
-
-        public void SetTransaction(IsolationLevel level) => Transaction = Connection.BeginTransaction(level);
-
-        internal void Log(String message) {
-            if (Debug) {
-                Console.ForegroundColor = ConsoleColor.DarkRed;
-                Console.WriteLine(String.Format("[{0}] {1}", DateTime.Now.Ticks, message));
-                Console.ForegroundColor = ConsoleColor.White;
-            }
+        public void Dispose()
+        {
+            Connection.Dispose();
+            Logger.Log(Logger.CONNECTION_CLOSE);
         }
 
-        internal static void ExecuteQuerry(SqlConnector sqlc, ref SqlQuerryRequest sqlr, CommandBehavior cb) {
-            sqlc.Log(sqlr.Request);
+        internal void ApplyTransaction(IsolationLevel isolationLevel)
+        {
+            Transaction = Connection.BeginTransaction(isolationLevel);
+            Logger.Log(Logger.TRANSACTION_START + isolationLevel);
+        }
+
+        internal Boolean Execute(ref SqlRequest request, Boolean transaction, CommandBehavior behaviour)
+        {
+            Logger.Log(request.Statement);
             try {
-                using (SqlCommand sqlcmd = new SqlCommand(sqlr.Request, sqlc.Connection, sqlc.Transaction))
-                using (SqlDataReader reader = sqlcmd.ExecuteReader(cb)) {
-                    sqlr.RowsAffected = reader.RecordsAffected;
+                if (transaction) {
+                    ApplyTransaction(IsolationLevel.Serializable);
+                }
+
+                using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction))
+                using (SqlDataReader reader = command.ExecuteReader(behaviour)) {
+                    request.Headers = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+                    request.Response = new List<Object[]>();
                     while (reader.Read()) {
-                        Object[] objr = new Object[reader.FieldCount];
-                        reader.GetValues(objr);
-                        sqlr.Response.Add(objr);
+                        Object[] data = new Object[reader.FieldCount];
+                        reader.GetValues(data);
+                        request.Response.Add(data);
                     }
                 }
 
-                sqlc.Transaction?.Commit();
-                sqlc.Log("REQUEST SUCCEEDED");
+                Transaction?.Commit();
+                Logger.Log(Logger.TRANSACTION_COMMIT);
+                return true;
             } catch (SqlException) {
-                sqlc.Transaction?.Rollback();
-                sqlc.Log("REQUEST FAILED");
+                Transaction?.Rollback();
+                Logger.Log(Logger.TRANSACTION_ROLLBACK);
             } finally {
-                sqlc.Transaction = null;
+                Transaction = null;
             }
+
+            return false;
         }
 
-        internal static void ExecuteNonQuerry(SqlConnector sqlc, ref SqlNonQuerryRequest sqlr) {
-            sqlc.Log(sqlr.Request);
+        internal Boolean ExecuteNonQuerry(ref SqlRequest request, Boolean transaction)
+        {
+            Logger.Log(request.Statement);
             try {
-                using (SqlCommand sqlcmd = new SqlCommand(sqlr.Request, sqlc.Connection, sqlc.Transaction)) {
-                    sqlr.RowsAffected = sqlcmd.ExecuteNonQuery();
+                if (transaction) {
+                    ApplyTransaction(IsolationLevel.Serializable);
                 }
 
-                sqlc.Transaction?.Commit();
-                sqlc.Log("REQUEST SUCCEEDED");
+                using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction)) {
+                    request.RecordsAffected = command.ExecuteNonQuery();
+                }
+
+                Transaction?.Commit();
+                Logger.Log(Logger.TRANSACTION_COMMIT);
+                return true;
             } catch (SqlException) {
-                sqlc.Transaction?.Rollback();
-                sqlc.Log("REQUEST FAILED");
+                Transaction?.Rollback();
+                Logger.Log(Logger.TRANSACTION_ROLLBACK);
             } finally {
-                sqlc.Transaction = null;
+                Transaction = null;
             }
+
+            return false;
         }
-        
-        public static void Execute(SqlConnector sqlc, ref ISqlRequest sqlr) {
-            if (sqlr is SqlQuerryRequest) {
-                SqlQuerryRequest request = sqlr as SqlQuerryRequest;
-                ExecuteQuerry(sqlc, ref request, CommandBehavior.SequentialAccess);
-            } else {
-                SqlNonQuerryRequest request = sqlr as SqlNonQuerryRequest;
-                ExecuteNonQuerry(sqlc, ref request);
-            }
+    }
+
+    public sealed class SqlRequest
+    {
+        public String Statement { get; set; }
+
+        public Int32 RecordsAffected { get; set; }
+
+        public List<Object[]> Response { get; set; }
+        public List<String> Headers { get; set; }
+    }
+
+    public sealed class SqlConnectionStringBuilder
+    {
+        private StringBuilder builder = new StringBuilder();
+
+        public SqlConnectionStringBuilder(String server, String database)
+        {
+            builder.AppendFormat("Data Source={0};Initial Catalog={1};", server, database);
         }
-    }   
+
+        public SqlConnectionStringBuilder Login(String username, String password)
+        {
+            builder.AppendFormat("User ID={0};Password={1};", username, password);
+            return this;
+        }
+
+        public SqlConnectionStringBuilder SetTrusted(Boolean trusted)
+        {
+            builder.AppendFormat("Trusted_Connection={0};", trusted ? "True" : "False");
+            return this;
+        }
+
+        public override String ToString()
+        {
+            return builder.ToString();
+        }
+    }
 }

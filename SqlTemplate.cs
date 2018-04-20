@@ -6,41 +6,54 @@ using System.Threading.Tasks;
 
 namespace Avaritia
 {
-    internal class SqlColumnData
+    internal sealed class SqlColumnTemplate
     {
-        public Int32 Ordinal { get; internal set; }
-        public String Label { get; internal set; }
-        public Boolean PrimaryKey { get; internal set; } = false;
-        public Boolean ForeignKey { get; internal set; } = false;
-        public Boolean AllowNull { get; internal set; }
-        public Object Default { get; internal set; }
-        public String Type { get; internal set; }
-        public Int32? Length { get; internal set; }
-    }
+        public String Label { get; }
+        public Int32 Ordinal { get; }
+        public Boolean PrimaryKey { get; private set; }
+        public Boolean AllowNull { get; }
+        public Boolean HasDefault { get; }
 
-    internal class SqlTableTemplate : Dictionary<String, SqlColumnData>
-    {
-        public String Label { get; internal set; }
-        public String[] Headers { get; internal set; }
+        [Obsolete("Unused")]
+        public String DbType { get; }
+        [Obsolete("Unused")]
+        public Int32? Length { get; }
 
-        public static void MakeHeaders(ref SqlTableTemplate sqltp)
+        public SqlColumnTemplate(String label, Int32 ordinal, Boolean primaryKey, Boolean allowNull, Boolean hasDefault)
         {
-            sqltp.Headers = new String[sqltp.Count];
-            foreach (KeyValuePair<String, SqlColumnData> kvp in sqltp) {
-                sqltp.Headers[kvp.Value.Ordinal] = kvp.Key;
-            }
+            Label = label;
+            Ordinal = ordinal;
+            PrimaryKey = primaryKey;
+            AllowNull = allowNull;
+            HasDefault = hasDefault;
+        }
+
+        public void MarkAsPrimary()
+        {
+            PrimaryKey = true;
         }
     }
 
-    internal class SqlDatabaseTemplate : Dictionary<String, SqlTableTemplate>
+    internal sealed class SqlTableTemplate
     {
-        public String[] Tables { get; internal set; }
+        public Dictionary<String, SqlColumnTemplate> Columns { get; }
+        public String Label { get; }
 
-        public static void MakeTables(ref SqlDatabaseTemplate sqldp) {
-            sqldp.Tables = sqldp.Keys.ToArray();
-            foreach(KeyValuePair<String, SqlTableTemplate> kvp in sqldp) {
-                SqlTableTemplate tp = kvp.Value;
-                SqlTableTemplate.MakeHeaders(ref tp);
+        public SqlTableTemplate(String label)
+        {
+            Label = label;
+            Columns = new Dictionary<String, SqlColumnTemplate>();
+        }
+
+        public void AddColumn(SqlColumnTemplate column)
+        {
+            Columns.Add(column.Label, column);
+        }
+
+        public SqlColumnTemplate this[String column]
+        {
+            get {
+                return Columns[column];
             }
         }
     }
