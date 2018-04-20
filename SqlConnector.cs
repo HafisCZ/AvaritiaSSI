@@ -28,7 +28,7 @@ namespace Avaritia
         internal void Log(String message) {
             if (Debug) {
                 Console.ForegroundColor = ConsoleColor.DarkRed;
-                Console.WriteLine(message);
+                Console.WriteLine(String.Format("[{0}] {1}", DateTime.Now.Ticks, message));
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }

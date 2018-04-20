@@ -11,29 +11,28 @@ namespace Avaritia
 {
     public class SqlMapper
     {
-        internal SqlConnector SqlConnector { get; private set; }
-        internal SqlDatabaseTemplate SqlTemplate { get; private set; }
+        internal SqlConnector Connector { get; private set; }
+        internal SqlDatabaseTemplate Template { get; private set; }
 
-        public SqlMapper(SqlConnector sqlc, String tpref = null) {
-            SqlConnector = sqlc;
-            SqlTemplate = GetTemplate(sqlc, tpref);
+        public SqlMapper(SqlConnector connector, String tablePrefix = null) {
+            Connector = connector;
+            Template = GetTemplate(connector, tablePrefix);
         }
 
-        internal static SqlDatabaseTemplate GetTemplate(SqlConnector sqlc, String tpref)
+        internal static SqlDatabaseTemplate GetTemplate(SqlConnector connector, String tablePrefix)
         {
-            SqlDatabaseTemplate sqldp = new SqlDatabaseTemplate();
-            ISqlRequest request = SqlNonQuerryRequest.MakeTableDefinitionRequest(tpref);
-            SqlConnector.Execute(sqlc, ref request);
+            SqlDatabaseTemplate database = new SqlDatabaseTemplate();
 
+            ISqlRequest request = new SqlQuerryRequest { Request = String.Format("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'{0}", tablePrefix != null ? String.Format(" AND TABLE_NAME LIKE '{0}%'", tablePrefix) : "") };
+            SqlConnector.Execute(connector, ref request);
             foreach (Object[] row in (request as SqlQuerryRequest).Response) {
-                sqldp[row[0] as String] = new SqlTableTemplate { Label = row[0] as String };
+                database[row[0] as String] = new SqlTableTemplate { Label = row[0] as String };
             }
 
-            request = SqlNonQuerryRequest.MakeColumnDefinitionRequest(tpref);
-            SqlConnector.Execute(sqlc, ref request);
-
+            request = new SqlQuerryRequest { Request = String.Format("SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS{0}", tablePrefix != null ? String.Format(" WHERE TABLE_NAME LIKE '{0}%'", tablePrefix) : "") };
+            SqlConnector.Execute(connector, ref request);
             foreach (Object[] row in (request as SqlQuerryRequest).Response) {
-                sqldp[row[0] as String][row[1] as String] = new SqlColumnData {
+                database[row[0] as String][row[1] as String] = new SqlColumnData {
                     Label = row[1] as String,
                     Ordinal = (row[2] as Int32? ?? 0) - 1,
                     Default = row[3],
@@ -43,109 +42,92 @@ namespace Avaritia
                 };
             }
 
-            ISqlRequest sqlqrP = SqlNonQuerryRequest.MakeTableConstraintRequest();
-            SqlConnector.Execute(sqlc, ref sqlqrP);
-            foreach (Object[] o in (sqlqrP as SqlQuerryRequest).Response) {
-                sqldp[o[0] as String][o[1] as String].PrimaryKey = o[2] as String == "PRIMARY KEY";
-                sqldp[o[0] as String][o[1] as String].ForeignKey = o[2] as String == "FOREIGN KEY";
+            request = new SqlQuerryRequest { Request = "SELECT TC.TABLE_NAME, CCU.COLUMN_NAME, TC.CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC LEFT JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE CCU ON TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME" };
+            SqlConnector.Execute(connector, ref request);
+            foreach (Object[] row in (request as SqlQuerryRequest).Response) {
+                String tempTable = row[0] as String;
+                String tempColumn = row[1] as String;
+                String tempConstraint = row[2] as String;
+
+                if (database.ContainsKey(tempTable)) {
+                    SqlColumnData col = database[tempTable][tempColumn];
+                    col.PrimaryKey = tempConstraint == "PRIMARY KEY";
+                    col.ForeignKey = tempConstraint == "FOREIGN KEY";
+                }
             }
 
-            SqlDatabaseTemplate.MakeTables(ref sqldp);
-            return sqldp;
+            SqlDatabaseTemplate.MakeTables(ref database);
+            return database;
         }
 
-        public static void Select<Type>(SqlMapper sqlm, out List<Type> list, String table, params String[] cols) where Type : ISqlUserRecord, new() => Select(sqlm, out list, table, null, cols);
-        public static void Select<Type>(SqlMapper sqlm, out List<Type> list, String table, String where, params String[] cols) where Type : ISqlUserRecord, new()
-        {
-            String[] header = cols.Length > 0 ? sqlm.SqlTemplate[table].Headers : cols;
-            ISqlRequest sqlqr = SqlNonQuerryRequest.MakeSelectRequest(table, header, where);
-            SqlConnector.Execute(sqlm.SqlConnector, ref sqlqr);
-
+        public static void Select<Type>(SqlMapper mapper, out List<Type> list, String table, String filter, params String[] headers) where Type : ISqlUserRecord, new() {
+            String[] requestedHeaders = headers.Length > 0 ? headers : mapper.Template[table].Headers;
+            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(typeof(Type));
             list = new List<Type>();
 
-            foreach (Object[] row in (sqlqr as SqlQuerryRequest).Response) {
-                Type sqlur = new Type();
-
-                PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(sqlur);
-                for (Int32 ordinal = 0; ordinal < row.Length; ordinal++) {
-                    PropertyDescriptor pd = pdc.Find(header[ordinal], false);
-                    pd?.SetValue(sqlur, row[ordinal]);
+            SqlQuerryRequest request = new SqlQuerryRequest { Request = String.Format("SELECT {0} FROM {1}{2}", String.Join(", ", headers), table, (filter == null) ? "" : String.Format(" WHERE {0}", filter)) };
+            SqlConnector.ExecuteQuerry(mapper.Connector, ref request, System.Data.CommandBehavior.SequentialAccess);
+            foreach (Object[] record in request.Response) {
+                Type userRecord = new Type();
+                for (Int32 ord = 0; ord < record.Length; ord++) {
+                    propertyDescriptors.Find(requestedHeaders[ord], false)?.SetValue(userRecord, record[ord]);
                 }
 
-                list.Add(sqlur);
+                list.Add(userRecord);
             }
         }
 
-        public static void Update<Type>(SqlMapper sqlm, ref Type record) where Type : ISqlUserRecord {
-            List<String> keys = new List<String>();
-            List<String> cols = new List<String>();
+        public static void Update<Type>(SqlMapper mapper, ref Type record) where Type : ISqlUserRecord {
+            Dictionary<String, Boolean> headers = new Dictionary<String, Boolean>();
+            foreach (SqlColumnData columnData in mapper.Template[record.GetTableLabel()].Values) {
+                headers[columnData.Label] = columnData.PrimaryKey;
+            }
+
             Dictionary<String, Object> vals = new Dictionary<String, Object>();
-            foreach (SqlColumnData data in sqlm.SqlTemplate[record.GetTableLabel()].Values.ToArray()) {
-                (data.PrimaryKey ? keys : cols).Add(data.Label);
-            }
-
-            PropertyDescriptorCollection descriptors = TypeDescriptor.GetProperties(record);
-            foreach (String key in keys) {
-                PropertyDescriptor descriptor = descriptors.Find(key, false);
-                if (descriptors != null) {
-                    vals[key] = descriptor.GetValue(record);
+            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(record);
+            foreach (KeyValuePair<String, Boolean> pair in headers) {
+                PropertyDescriptor descriptor = propertyDescriptors.Find(pair.Key, false);
+                if (descriptor == null && pair.Value) {
+                    throw new Exception();
+                } else if (descriptor != null) {
+                    vals[pair.Key] = descriptor.GetValue(record);
                 }
             }
 
-            foreach (String col in cols) {
-                PropertyDescriptor descriptor = descriptors.Find(col, false);
-                if (descriptor != null) {
-                    vals[col] = descriptor.GetValue(record);
-                }
-            }
+            String primary = String.Join(",", headers.Where(pair => pair.Value).Select(pair => String.Format("{0}='{1}'", pair.Key, vals[pair.Key])));
+            String values = String.Join(",", headers.Where(pair => !pair.Value).Select(pair => String.Format("{0}='{1}'", pair.Key, vals[pair.Key])));
 
-            StringBuilder keyBuilder = new StringBuilder();
-            for (Int32 i = 0; i < keys.Count; i++) {
-                keyBuilder.AppendFormat("{0}{1}='{2}'", (i > 0 ? "," : " "), keys[i], vals[keys[i]]);
-            }
-
-            StringBuilder colBuilder = new StringBuilder();
-            for (Int32 i = 0; i < cols.Count; i++) {
-                if (vals.ContainsKey(cols[i])) {
-                    colBuilder.AppendFormat("{0}{1}='{2}'", (i > 0 ? "," : " "), cols[i], vals[cols[i]]);
-                }
-            }
-
-            SqlNonQuerryRequest request = new SqlNonQuerryRequest { Request = String.Format("UPDATE {0} SET {1} WHERE {2}", record.GetTableLabel(), colBuilder.ToString(), keyBuilder.ToString()) };
-            SqlConnector.ExecuteNonQuerry(sqlm.SqlConnector, ref request);
-        }
-
-        public static void Insert<Type>(SqlMapper sqlm, Type record) where Type : ISqlUserRecord {
-            String[] headers = sqlm.SqlTemplate[record.GetTableLabel()].Headers;
-
-            Dictionary<String, String> values = new Dictionary<String, String>();
-            PropertyDescriptorCollection pdc = TypeDescriptor.GetProperties(record);
-
-            foreach (String header in headers) {
-                PropertyDescriptor descriptor = pdc.Find(header, false);
-                if (descriptor != null) {
-                    Object value = descriptor.GetValue(record);
-                    if (value != null || sqlm.SqlTemplate[record.GetTableLabel()][header].AllowNull) {
-                        values[descriptor.Name] = value as String ?? "Null";
-                    } else if (sqlm.SqlTemplate[record.GetTableLabel()][header].Default != null) {
-                        values[descriptor.Name] = sqlm.SqlTemplate[record.GetTableLabel()][header].Default as String;
-                    }
-
-                    values[descriptor.Name] = String.Format("'{0}'", descriptor.GetValue(record));
-                }
-            }
-
-            ISqlRequest sqlr = new SqlNonQuerryRequest {
-                Request = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", record.GetTableLabel(), String.Join(",", values.Keys.ToArray()), String.Join(",", values.Values.ToArray()))
+            SqlNonQuerryRequest request = new SqlNonQuerryRequest {
+                Request = String.Format("UPDATE {0} SET {1} WHERE {2}", record.GetTableLabel(), primary, values)
             };
-
-            SqlConnector.Execute(sqlm.SqlConnector, ref sqlr);
+            SqlConnector.ExecuteNonQuerry(mapper.Connector, ref request);
         }
 
+        public static void Insert<Type>(SqlMapper mapper, Type record) where Type : ISqlUserRecord {
+            Dictionary<String, String> values = new Dictionary<String, String>();
+            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(record);
+            foreach (SqlColumnData columnData in mapper.Template[record.GetTableLabel()].Values) {
+                PropertyDescriptor descriptor = propertyDescriptors.Find(columnData.Label, false);
+                if (descriptor == null && !columnData.AllowNull) {
+                    throw new Exception();
+                } else if (descriptor != null) {
+                    values[columnData.Label] = String.Format("{0}", descriptor.GetValue(record));
+                }
+            }
+
+            SqlNonQuerryRequest request = new SqlNonQuerryRequest {
+                Request = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", record.GetTableLabel(), String.Join(",", values.Keys), String.Join(",", values))
+            };
+            SqlConnector.ExecuteNonQuerry(mapper.Connector, ref request);
+        }
+
+        [Obsolete]
         public static void Select(SqlMapper sqlm, out List<SqlDynamicRecord> list, String table, params String[] cols) {
-            String[] header = cols.Length > 0 ? cols : sqlm.SqlTemplate[table].Headers;
-            ISqlRequest sqlqr = SqlNonQuerryRequest.MakeSelectRequest(table, header);
-            SqlConnector.Execute(sqlm.SqlConnector, ref sqlqr);
+            String[] header = cols.Length > 0 ? cols : sqlm.Template[table].Headers;
+            SqlQuerryRequest sqlqr = new SqlQuerryRequest {
+                Request = String.Format("SELECT {0} FROM {1}", String.Join(", ", header), table)
+            };
+            SqlConnector.ExecuteQuerry(sqlm.Connector, ref sqlqr, System.Data.CommandBehavior.SequentialAccess);
 
             list = new List<SqlDynamicRecord>();
 
@@ -160,10 +142,11 @@ namespace Avaritia
             }
         }
 
+        [Obsolete]
         public static void Update(SqlMapper sqlm, ref SqlDynamicRecord record) {
             List<String> keys = new List<String>();
             List<String> cols = new List<String>();
-            foreach (SqlColumnData data in sqlm.SqlTemplate[record.TableName].Values.ToArray()) {
+            foreach (SqlColumnData data in sqlm.Template[record.TableName].Values.ToArray()) {
                 (data.PrimaryKey ? keys : cols).Add(data.Label);
             }
 
@@ -180,12 +163,13 @@ namespace Avaritia
             }
 
             SqlNonQuerryRequest request = new SqlNonQuerryRequest { Request = String.Format("UPDATE {0} SET {1} WHERE {2}", record.TableName, colBuilder.ToString(), keyBuilder.ToString()) };
-            SqlConnector.ExecuteNonQuerry(sqlm.SqlConnector, ref request);
+            SqlConnector.ExecuteNonQuerry(sqlm.Connector, ref request);
         }
 
+        [Obsolete]
         public static void Insert(SqlMapper sqlm, SqlDynamicRecord record, String table)
         {
-            String[] headers = sqlm.SqlTemplate[table].Headers;
+            String[] headers = sqlm.Template[table].Headers;
 
             Dictionary<String, String> values = new Dictionary<String, String>();
 
@@ -199,13 +183,14 @@ namespace Avaritia
                 Request = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", table, String.Join(",", values.Keys.ToArray()), String.Join(",", values.Values.ToArray()))
             };
 
-            SqlConnector.Execute(sqlm.SqlConnector, ref sqlr);
+            SqlConnector.Execute(sqlm.Connector, ref sqlr);
         }
 
+        [Obsolete]
         public static String GetPattern(SqlMapper sqlm) {
             StringBuilder sb = new StringBuilder();
 
-            foreach (KeyValuePair<String, SqlTableTemplate> tp in sqlm.SqlTemplate) {
+            foreach (KeyValuePair<String, SqlTableTemplate> tp in sqlm.Template) {
                 sb.AppendFormat("[{0,-5}{1,-30}{2,-10}{3,-10}{4,-20}{5,-10}] {6}\n", "ORD", "NAME", "TYPE", "NULL", "PRIMARY", "FOREING", tp.Key);
                 foreach (KeyValuePair<String, SqlColumnData> cp in tp.Value) {
                     SqlColumnData cd = cp.Value;
@@ -217,10 +202,11 @@ namespace Avaritia
             return sb.ToString();
         }
 
+        [Obsolete]
         public static String GetDebug(SqlMapper sqlm) {
             StringBuilder sb = new StringBuilder();
 
-            foreach (KeyValuePair<String, SqlTableTemplate> tp in sqlm.SqlTemplate) {
+            foreach (KeyValuePair<String, SqlTableTemplate> tp in sqlm.Template) {
                 sb.AppendFormat("  - {0}\n", tp.Key);
                 foreach (KeyValuePair<String, SqlColumnData> cp in tp.Value) {
                     sb.AppendFormat("    - {0}\n", cp.Key);
