@@ -30,8 +30,7 @@ namespace Avaritia
         public void Select<Type>(out List<Type> records, String filter, params String[] headers) where Type : ISqlUserRecord, new()
         {
             String[] requestedHeaders = headers.Length > 0 ? headers : Template.Columns.Keys.ToArray();
-            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(typeof(Type));
-            Dictionary<Int32, PropertyDescriptor> descriptors = Enumerable.Range(0, propertyDescriptors.Count).Select(i => new { ord = i, prop = propertyDescriptors.Find(requestedHeaders[i], false) }).ToDictionary(p => p.ord, p => p.prop);
+            Dictionary<Int32, PropertyDescriptor> descriptors = Enumerable.Range(0, TypeCache.GetDescriptors(typeof(Type)).Count).Select(iteration => new { ordinal = iteration, property = TypeCache.TryGetDescriptor(typeof(Type), requestedHeaders[iteration]) }).SkipWhile(value => value.property != null).ToDictionary(p => p.ordinal, p => p.property);
 
             records = new List<Type>();
            
@@ -54,9 +53,8 @@ namespace Avaritia
             }
 
             Dictionary<String, Object> vals = new Dictionary<String, Object>();
-            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(record);
             foreach (KeyValuePair<String, Boolean> pair in headers) {
-                PropertyDescriptor descriptor = propertyDescriptors.Find(pair.Key, false);
+                PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), pair.Key);
                 if (descriptor == null && pair.Value) {
                     throw new Exception();
                 } else if (descriptor != null) {
@@ -75,9 +73,8 @@ namespace Avaritia
             String[] primaryKeys = Template.Columns.Where(pair => pair.Value.PrimaryKey).Select(pair => pair.Key).ToArray();
 
             Dictionary<String, Object> vals = new Dictionary<String, Object>();
-            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(record);
             foreach (String key in primaryKeys) {
-                PropertyDescriptor descriptor = propertyDescriptors.Find(key, false);
+                PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), key);
                 if (descriptor == null) {
                     throw new Exception();
                 } else if (descriptor != null) {
@@ -94,10 +91,9 @@ namespace Avaritia
         public void Insert<Type>(ref Type record) where Type : ISqlUserRecord
         {
             Dictionary<String, String> values = new Dictionary<String, String>();
-            PropertyDescriptorCollection propertyDescriptors = TypeDescriptor.GetProperties(record);
 
             foreach (SqlColumnTemplate template in Template.Columns.Values) {
-                PropertyDescriptor descriptor = propertyDescriptors.Find(template.Label, false);
+                PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), template.Label);
                 if (descriptor == null && !template.AllowNull) {
                     throw new Exception();
                 } else if (descriptor != null) {

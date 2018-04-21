@@ -17,6 +17,7 @@ namespace Avaritia
         public const String TEMPLATE_CREATE = "TEMPL CREATE";
         public const String TEMPLATE_FINISHED = "TEMPL FINISH";
         public const String TABLE_GET = "TABLE GET";
+        public const String TYPECACHE_INSERT = "CACHE INSERT";
 
         public static Boolean Enable { get; set; }
 
