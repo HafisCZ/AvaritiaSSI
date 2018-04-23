@@ -8,16 +8,16 @@ namespace Avaritia
 {
     public static class Logger
     {
-        public const String TRANSACTION_ROLLBACK = "FAILED";
-        public const String TRANSACTION_COMMIT = "SUCCESS";
-        public const String TRANSACTION_START = "TRANSACTION START";
-        public const String CONNECTION_OPEN = "CONN OPEN";
-        public const String CONNECTION_CLOSE = "CONN CLOSE";
-        public const String TEMPLATE_DOES_NOT_EXIST = "TEMPL DNE";
-        public const String TEMPLATE_CREATE = "TEMPL CREATE";
-        public const String TEMPLATE_FINISHED = "TEMPL FINISH";
-        public const String TABLE_GET = "TABLE GET";
-        public const String TYPECACHE_INSERT = "CACHE INSERT";
+        public const String TRANSACTION_ROLLBACK = "[TRANSACTION][ROLLBACK] ";
+        public const String TRANSACTION_COMMIT = "[TRANSACTION][SUCCESS] ";
+        public const String TRANSACTION_START = "[TRANSACTION][BEGIN] ";
+        public const String CONNECTION_OPEN = "[CONNECTION][OPEN] ";
+        public const String CONNECTION_CLOSE = "[CONNECTION][CLOSE] ";
+        public const String TEMPLATE_DOES_NOT_EXIST = "[TEMPLATE][NOT_EXISTS_ERROR] ";
+        public const String TEMPLATE_CREATE = "[TEMPLATE][BEGIN_MAP] ";
+        public const String TEMPLATE_FINISHED = "[TEMPLATE][END_MAP] ";
+        public const String TYPECACHE_INSERT = "[TYPECACHE][INSERT] ";
+        public const String QUERRY = "[QUERRY] ";
 
         public static Boolean Enable { get; set; }
 

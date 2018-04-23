@@ -12,7 +12,7 @@ namespace Avaritia
         public Int32 Ordinal { get; }
         public Boolean PrimaryKey { get; private set; }
         public Boolean AllowNull { get; }
-        public Boolean HasDefault { get; }
+        public Boolean HasDefault { get; private set; }
 
         [Obsolete("Unused")]
         public String DbType { get; }
@@ -31,6 +31,11 @@ namespace Avaritia
         public void MarkAsPrimary()
         {
             PrimaryKey = true;
+        }
+
+        public void MarkAsDefault()
+        {
+            HasDefault = true;
         }
     }
 

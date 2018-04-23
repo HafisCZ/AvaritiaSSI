@@ -21,89 +21,108 @@ namespace Avaritia
             Template = template;
         }
 
-        public void Truncate()
+        public Boolean Truncate()
         {
-            SqlRequest request = new SqlRequest { Statement = String.Format("DELETE FROM {0}", Label) };
-            Connector.ExecuteNonQuerry(ref request, true);
+            SqlRequest request = new SqlRequest { Statement = String.Format("DELETE FROM [{0}]", Label) };
+            return Connector.ExecuteNonQuerry(ref request, true);
         }
 
-        public void Select<Type>(out List<Type> records, String filter, params String[] headers) where Type : ISqlUserRecord, new()
+        public Boolean Select<Type>(out List<Type> records, String filter = null) where Type : ISqlUserRecord, new()
         {
-            String[] requestedHeaders = headers.Length > 0 ? headers : Template.Columns.Keys.ToArray();
-            Dictionary<Int32, PropertyDescriptor> descriptors = Enumerable.Range(0, TypeCache.GetDescriptors(typeof(Type)).Count).Select(iteration => new { ordinal = iteration, property = TypeCache.TryGetDescriptor(typeof(Type), requestedHeaders[iteration]) }).SkipWhile(value => value.property != null).ToDictionary(p => p.ordinal, p => p.property);
+            Dictionary<Int32, PropertyDescriptor> descriptors = TypeCache.GetDescriptors(typeof(Type)).ToDictionary(pair => Template.Columns[pair.Key].Ordinal, pair => pair.Value);
+            String[] headers = TypeCache.GetDescriptors(typeof(Type)).Select(pair => pair.Key).ToArray();
 
             records = new List<Type>();
-           
-            SqlRequest request = new SqlRequest { Statement = String.Format("SELECT {0} FROM {1}{2}", String.Join(",", requestedHeaders), Label, (filter == null) ? "" : String.Format(" WHERE {0}", filter)) };
-            Connector.Execute(ref request, true, SqlConnector.DEFAULT_BEHAVIOUR);
+
+            SqlRequest request = new SqlRequest { Statement = String.Format("SELECT {0} FROM [{1}] {2}", String.Join(",", descriptors.Select(pair => String.Format("[{0}]", headers[pair.Key]))), Label, (filter ?? "")) };
+            Boolean result = Connector.Execute(ref request, true);
             foreach (Object[] row in request.Response) {
                 Type record = new Type();
                 foreach (KeyValuePair<Int32, PropertyDescriptor> kvp in descriptors) {
-                    kvp.Value?.SetValue(record, row[kvp.Key]);
+                    if (row[kvp.Key].GetType() != typeof(DBNull)) {
+                        kvp.Value?.SetValue(record, row[kvp.Key]);
+                    }
                 }
                 records.Add(record);
             }
+
+            return result;
         }
 
-        public void Update<Type>(ref Type record) where Type : ISqlUserRecord
+        public Boolean Update<Type>(Type record) where Type : ISqlUserRecord
         {
-            Dictionary<String, Boolean> headers = new Dictionary<String, Boolean>();
-            foreach (SqlColumnTemplate templates in Template.Columns.Values) {
-                headers[templates.Label] = templates.PrimaryKey;
-            }
+            Dictionary<String, Boolean> headers = Template.Columns.Values.ToDictionary(template => template.Label, template => template.PrimaryKey);
 
-            Dictionary<String, Object> vals = new Dictionary<String, Object>();
+            Dictionary<String, String> pairs = new Dictionary<String, String>();
+
             foreach (KeyValuePair<String, Boolean> pair in headers) {
-                PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), pair.Key);
-                if (descriptor == null && pair.Value) {
-                    throw new Exception();
-                } else if (descriptor != null) {
-                    vals[pair.Key] = descriptor.GetValue(record);
+                Object value = TypeCache.TryGetDescriptor(typeof(Type), pair.Key)?.GetValue(record);
+                if (value == null && pair.Value) {
+                    return false;
+                } else {
+                    pairs[String.Format("{0}", pair.Key)] = Parse(value);
                 }
             }
 
-            SqlRequest request = new SqlRequest {
-                Statement = String.Format("UPDATE {0} SET {1} WHERE {2}", Label, String.Join(",", headers.Where(pair => !pair.Value).Select(pair => String.Format("{0}='{1}'", pair.Key, vals[pair.Key]))), String.Join(",", headers.Where(pair => pair.Value).Select(pair => String.Format("{0}='{1}'", pair.Key, vals[pair.Key]))))
-            };
-            Connector.ExecuteNonQuerry(ref request, true);
+            SqlRequest request = new SqlRequest { Statement = String.Format("UPDATE [{0}] SET {1} WHERE {2}", Label, String.Join(",", headers.Where(key => !key.Value).Select(key => String.Format("[{0}]={1}", key.Key, pairs[key.Key]))), String.Join(",", headers.Where(key =>  key.Value).Select(key => String.Format("[{0}]={1}", key.Key, pairs[key.Key])))) };
+            return Connector.ExecuteNonQuerry(ref request, true);
         }
 
-        public void Delete<Type>(ref Type record) where Type : ISqlUserRecord
+        public Boolean Delete<Type>(Type record) where Type : ISqlUserRecord
         {
-            String[] primaryKeys = Template.Columns.Where(pair => pair.Value.PrimaryKey).Select(pair => pair.Key).ToArray();
+            String[] keys = Template.Columns.Where(pair => pair.Value.PrimaryKey).Select(pair => pair.Key).ToArray();
+            if (keys.Length < 1) {
+                keys = Template.Columns.Keys.ToArray();
+            }
 
-            Dictionary<String, Object> vals = new Dictionary<String, Object>();
-            foreach (String key in primaryKeys) {
-                PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), key);
-                if (descriptor == null) {
-                    throw new Exception();
-                } else if (descriptor != null) {
-                    vals[key] = descriptor.GetValue(record);
+            Dictionary<String, String> pairs = new Dictionary<String, String>();
+
+            foreach (String key in keys) {
+                Object value = TypeCache.TryGetDescriptor(typeof(Type), key)?.GetValue(record);
+                if (value != null || (Template.Columns[key].AllowNull && !Template.Columns[key].PrimaryKey)) {
+                    pairs[String.Format("[{0}]", key)] = Parse(value);
+                } else {
+                    return false;
                 }
             }
 
-            SqlRequest request = new SqlRequest {
-                Statement = String.Format("DELETE FROM {0} WHERE {1}", Label, String.Join(",", vals.Select(pair => String.Format("{0}='{1}'", pair.Key, vals[pair.Key]))))
-            };
-            Connector.ExecuteNonQuerry(ref request, true);
+            SqlRequest request = new SqlRequest { Statement = String.Format("DELETE FROM [{0}] WHERE {1}", Label, String.Join(" AND ", pairs.Select(pair => String.Format("{0}={1}", pair.Key, pairs[pair.Key])))) };
+            return Connector.ExecuteNonQuerry(ref request, true);
         }
 
-        public void Insert<Type>(ref Type record) where Type : ISqlUserRecord
+        public Boolean Insert<Type>(Type record) where Type : ISqlUserRecord
         {
-            Dictionary<String, String> values = new Dictionary<String, String>();
+            Dictionary<String, String> pairs = new Dictionary<String, String>();
 
             foreach (SqlColumnTemplate template in Template.Columns.Values) {
                 PropertyDescriptor descriptor = TypeCache.TryGetDescriptor(typeof(Type), template.Label);
-                if (descriptor == null && !template.AllowNull) {
-                    throw new Exception();
-                } else if (descriptor != null) {
-                    values[template.Label] = String.Format("'{0}'", descriptor.GetValue(record));
+                Object value = descriptor?.GetValue(record);
+                if (value != null) {
+                    pairs[String.Format("[{0}]", template.Label)] = Parse(value);
+                } else if (template.HasDefault || template.AllowNull) {
+                    continue;
+                } else {
+                    return false;
                 }
             }
 
-            SqlRequest request = new SqlRequest { Statement = String.Format("INSERT INTO {0} ({1}) VALUES ({2})", Label, String.Join(",", values.Keys), String.Join(",", values.Values)) };
-            Connector.ExecuteNonQuerry(ref request, true);
+            SqlRequest request = new SqlRequest { Statement = String.Format("INSERT INTO [{0}] ({1}) VALUES ({2})", Label, String.Join(",", pairs.Keys), String.Join(",", pairs.Values)) };
+            return Connector.ExecuteNonQuerry(ref request, true);
         }
+
+        internal String Parse(Object o)
+        {
+            if (o.GetType() == typeof(DateTime)) {
+                return String.Format("'{0}'", (o as DateTime?)?.Date.ToString("MM-dd-yyyy"));
+            } else if (o.GetType() == typeof(String)) {
+                return String.Format("'{0}'", (o as String).Replace("'", "''"));
+            } else {
+                return String.Format("'{0}'", o);
+            }
+        }
+
+        public void Begin() => Connector.TransactionPackBegin();
+        public void End() => Connector.TransactionPackBegin();
     }
 
     public interface ISqlUserRecord

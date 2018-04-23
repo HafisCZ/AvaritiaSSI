@@ -10,40 +10,63 @@ namespace Avaritia
 {
     public sealed class SqlConnector : IDisposable
     {
-        internal const CommandBehavior DEFAULT_BEHAVIOUR = CommandBehavior.SequentialAccess;
-
         private SqlConnection Connection { get; }
         private SqlTransaction Transaction { get; set; }
+        private Boolean Frozen { get; set; } = false;
 
         internal SqlConnector(String connectionString)
         {
             Connection = new SqlConnection(connectionString);
             Connection.Open();
+
             Logger.Log(Logger.CONNECTION_OPEN + connectionString);
         }
 
         public void Dispose()
         {
             Connection.Dispose();
+
             Logger.Log(Logger.CONNECTION_CLOSE);
         }
 
-        internal void ApplyTransaction(IsolationLevel isolationLevel)
+        public void TransactionPackBegin()
         {
-            Transaction = Connection.BeginTransaction(isolationLevel);
-            Logger.Log(Logger.TRANSACTION_START + isolationLevel);
+            Frozen = true;
         }
 
-        internal Boolean Execute(ref SqlRequest request, Boolean transaction, CommandBehavior behaviour)
+        public void TransactionPackEnd()
         {
-            Logger.Log(request.Statement);
+            Frozen = false;
             try {
-                if (transaction) {
-                    ApplyTransaction(IsolationLevel.Serializable);
+                Transaction?.Commit();
+                Logger.Log(Logger.TRANSACTION_COMMIT);
+            } catch (SqlException) {
+                Transaction?.Rollback();
+                Logger.Log(Logger.TRANSACTION_ROLLBACK);
+            } finally {
+                Transaction = null;
+            }
+        }
+
+        internal void SetTransaction(IsolationLevel isolationLevel)
+        {
+            if (Transaction == null) {
+                Transaction = Connection.BeginTransaction(isolationLevel);
+                Logger.Log(Logger.TRANSACTION_START + isolationLevel);
+            }
+        }
+
+        internal Boolean Execute(ref SqlRequest request, Boolean useTransaction)
+        {
+            try {
+                if (useTransaction) {
+                    SetTransaction(IsolationLevel.Serializable);
                 }
 
+                Logger.Log(Logger.QUERRY + request.Statement);
+
                 using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction))
-                using (SqlDataReader reader = command.ExecuteReader(behaviour)) {
+                using (SqlDataReader reader = command.ExecuteReader(CommandBehavior.SequentialAccess)) {
                     request.Headers = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
                     request.Response = new List<Object[]>();
                     while (reader.Read()) {
@@ -53,39 +76,50 @@ namespace Avaritia
                     }
                 }
 
-                Transaction?.Commit();
-                Logger.Log(Logger.TRANSACTION_COMMIT);
+                if (!Frozen) {
+                    Transaction?.Commit();
+                    Logger.Log(Logger.TRANSACTION_COMMIT);
+                }
+
                 return true;
             } catch (SqlException) {
                 Transaction?.Rollback();
                 Logger.Log(Logger.TRANSACTION_ROLLBACK);
             } finally {
-                Transaction = null;
+                if (!Frozen) {
+                    Transaction = null;
+                }
             }
 
             return false;
         }
 
-        internal Boolean ExecuteNonQuerry(ref SqlRequest request, Boolean transaction)
+        internal Boolean ExecuteNonQuerry(ref SqlRequest request, Boolean useTransaction)
         {
-            Logger.Log(request.Statement);
             try {
-                if (transaction) {
-                    ApplyTransaction(IsolationLevel.Serializable);
+                if (useTransaction) {
+                    SetTransaction(IsolationLevel.Serializable);
                 }
+
+                Logger.Log(Logger.QUERRY + request.Statement);
 
                 using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction)) {
                     request.RecordsAffected = command.ExecuteNonQuery();
                 }
 
-                Transaction?.Commit();
-                Logger.Log(Logger.TRANSACTION_COMMIT);
+                if (!Frozen) {
+                    Transaction?.Commit();
+                    Logger.Log(Logger.TRANSACTION_COMMIT);
+                }
+
                 return true;
             } catch (SqlException) {
                 Transaction?.Rollback();
                 Logger.Log(Logger.TRANSACTION_ROLLBACK);
             } finally {
-                Transaction = null;
+                if (!Frozen) {
+                    Transaction = null;
+                }
             }
 
             return false;
