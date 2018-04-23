@@ -11,11 +11,13 @@ namespace Avaritia
         private SqlConnector Connector { get; }
 
         private Dictionary<String, SqlTableTemplate> Tables { get; }
+        private Dictionary<String, SqlRoutineTemplate> Routines { get; }
 
         public SqlDatabase(String connectionString, String commonPrefix)
         {
             Connector = new SqlConnector(connectionString);
             Tables = CreateTemplates(commonPrefix);
+            Routines = CreateRoutines(commonPrefix);
         }
 
         public void Dispose()
@@ -23,9 +25,24 @@ namespace Avaritia
             Connector.Dispose();
         }
 
+        private Dictionary<String, SqlRoutineTemplate> CreateRoutines(String prefix)
+        {
+            Logger.Log(Logger.Action.TEMPLATE_ROUTINE_MAP_BEGIN, prefix);
+            Dictionary<String, SqlRoutineTemplate> routine = new Dictionary<String, SqlRoutineTemplate>();
+
+            SqlRequest request = new SqlRequest { Statement = String.Format("SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME LIKE '{0}%'", prefix) };
+            Connector.Execute(ref request, true);
+            foreach (Object[] row in request.Response) {
+                routine[row[0] as String] = new SqlRoutineTemplate(row[0] as String, (row[1] as String).Equals("PROCEDURE"));
+            }
+
+            Logger.Log(Logger.Action.TEMPLATE_ROUTINE_MAP_END);
+            return routine;
+        }
+
         private Dictionary<String, SqlTableTemplate> CreateTemplates(String prefix)
         {
-            Logger.Log(Logger.TEMPLATE_CREATE);
+            Logger.Log(Logger.Action.TEMPLATE_MAP_BEGIN, prefix);
             Dictionary<String, SqlTableTemplate> tables = new Dictionary<String, SqlTableTemplate>();
 
             SqlRequest request = new SqlRequest { Statement = String.Format("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE '{0}%'", prefix) };
@@ -57,18 +74,50 @@ namespace Avaritia
                 }
             }
 
-            Logger.Log(Logger.TEMPLATE_FINISHED);
+            Logger.Log(Logger.Action.TEMPLATE_MAP_END);
             return tables;
         }
+
+        public SqlRoutine GetRoutine(String routine)
+        {
+            try {
+                return new SqlRoutine(Connector, Routines[routine]);
+            } catch (Exception) {
+                Logger.Log(Logger.Action.TEMPLATE_NOTFOUND);
+                return null;
+            }
+        }
+
+        public Dictionary<String, SqlRoutine> GetRoutines()
+        {
+            try {
+                return Routines.ToDictionary(template => template.Key, template => new SqlRoutine(Connector, template.Value));
+            } catch (Exception) {
+                return null;
+            }
+        }
+
 
         public SqlTable GetTable(String table)
         {
             try {
-                return new SqlTable(Connector, table, Tables[table]);
+                return new SqlTable(Connector, Tables[table]);
             } catch (Exception) {
-                Logger.Log(Logger.TEMPLATE_DOES_NOT_EXIST);
+                Logger.Log(Logger.Action.TEMPLATE_NOTFOUND);
                 return null;
             }
         }
+
+        public Dictionary<String, SqlTable> GetTables()
+        {
+            try {
+                return Tables.ToDictionary(template => template.Key, template => new SqlTable(Connector, template.Value));
+            } catch (Exception) {
+                return null;
+            }
+        }
+
+        public void Begin() => Connector.TransactionPackBegin();
+        public void End() => Connector.TransactionPackEnd();
     }
 }

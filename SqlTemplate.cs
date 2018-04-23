@@ -62,4 +62,17 @@ namespace Avaritia
             }
         }
     }
+
+    internal sealed class SqlRoutineTemplate
+    {
+        public String Label { get; }
+        public Boolean IsProcedure { get; }
+        public Boolean IsFunction { get => !IsProcedure; }
+
+        public SqlRoutineTemplate(String label, Boolean isProcedure)
+        {
+            Label = label;
+            IsProcedure = isProcedure;
+        }
+    }
 }

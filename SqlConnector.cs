@@ -19,14 +19,14 @@ namespace Avaritia
             Connection = new SqlConnection(connectionString);
             Connection.Open();
 
-            Logger.Log(Logger.CONNECTION_OPEN + connectionString);
+            Logger.Log(Logger.Action.CONNECTION_OPEN, connectionString);
         }
 
         public void Dispose()
         {
             Connection.Dispose();
 
-            Logger.Log(Logger.CONNECTION_CLOSE);
+            Logger.Log(Logger.Action.CONNECTION_CLOSE);
         }
 
         public void TransactionPackBegin()
@@ -39,10 +39,11 @@ namespace Avaritia
             Frozen = false;
             try {
                 Transaction?.Commit();
-                Logger.Log(Logger.TRANSACTION_COMMIT);
+                Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
+                Transaction = null;
             } catch (SqlException) {
                 Transaction?.Rollback();
-                Logger.Log(Logger.TRANSACTION_ROLLBACK);
+                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
             } finally {
                 Transaction = null;
             }
@@ -52,7 +53,7 @@ namespace Avaritia
         {
             if (Transaction == null) {
                 Transaction = Connection.BeginTransaction(isolationLevel);
-                Logger.Log(Logger.TRANSACTION_START + isolationLevel);
+                Logger.Log(Logger.Action.TRANSACTION_BEGIN, isolationLevel.ToString());
             }
         }
 
@@ -63,7 +64,7 @@ namespace Avaritia
                     SetTransaction(IsolationLevel.Serializable);
                 }
 
-                Logger.Log(Logger.QUERRY + request.Statement);
+                Logger.Log(Logger.Action.EXECUTE_QUERRY, request.Statement);
 
                 using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction))
                 using (SqlDataReader reader = command.ExecuteReader(CommandBehavior.SequentialAccess)) {
@@ -78,13 +79,13 @@ namespace Avaritia
 
                 if (!Frozen) {
                     Transaction?.Commit();
-                    Logger.Log(Logger.TRANSACTION_COMMIT);
+                    Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
                 }
 
                 return true;
             } catch (SqlException) {
                 Transaction?.Rollback();
-                Logger.Log(Logger.TRANSACTION_ROLLBACK);
+                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
             } finally {
                 if (!Frozen) {
                     Transaction = null;
@@ -101,7 +102,7 @@ namespace Avaritia
                     SetTransaction(IsolationLevel.Serializable);
                 }
 
-                Logger.Log(Logger.QUERRY + request.Statement);
+                Logger.Log(Logger.Action.EXECUTE_NONQUERRY, request.Statement);
 
                 using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction)) {
                     request.RecordsAffected = command.ExecuteNonQuery();
@@ -109,13 +110,13 @@ namespace Avaritia
 
                 if (!Frozen) {
                     Transaction?.Commit();
-                    Logger.Log(Logger.TRANSACTION_COMMIT);
+                    Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
                 }
 
                 return true;
-            } catch (SqlException) {
+            } catch (SqlException e) {
                 Transaction?.Rollback();
-                Logger.Log(Logger.TRANSACTION_ROLLBACK);
+                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
             } finally {
                 if (!Frozen) {
                     Transaction = null;

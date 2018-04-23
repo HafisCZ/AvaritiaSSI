@@ -8,30 +8,32 @@ namespace Avaritia
 {
     public static class Logger
     {
-        public const String TRANSACTION_ROLLBACK = "[TRANSACTION][ROLLBACK] ";
-        public const String TRANSACTION_COMMIT = "[TRANSACTION][SUCCESS] ";
-        public const String TRANSACTION_START = "[TRANSACTION][BEGIN] ";
-        public const String CONNECTION_OPEN = "[CONNECTION][OPEN] ";
-        public const String CONNECTION_CLOSE = "[CONNECTION][CLOSE] ";
-        public const String TEMPLATE_DOES_NOT_EXIST = "[TEMPLATE][NOT_EXISTS_ERROR] ";
-        public const String TEMPLATE_CREATE = "[TEMPLATE][BEGIN_MAP] ";
-        public const String TEMPLATE_FINISHED = "[TEMPLATE][END_MAP] ";
-        public const String TYPECACHE_INSERT = "[TYPECACHE][INSERT] ";
-        public const String QUERRY = "[QUERRY] ";
-
-        public static Boolean Enable { get; set; }
-
-        public static List<Tuple<Int64, String>> Logs { get; } = new List<Tuple<Int64, String>>();
-
-        public static void Clear()
+        public enum Action
         {
-            Logs.Clear();
+            UNDEFINED,
+            TRANSACTION_BEGIN,
+            TRANSACTION_END_SUCCESS,
+            TRANSACTION_END_FAIL,
+            CONNECTION_OPEN,
+            CONNECTION_CLOSE,
+            TEMPLATE_NOTFOUND,
+            TEMPLATE_MAP_BEGIN,
+            TEMPLATE_MAP_END,
+            TYPECACHE_HIT,
+            TYPECACHE_MAP,
+            EXECUTE_QUERRY,
+            EXECUTE_NONQUERRY,
+            TEMPLATE_ROUTINE_MAP_BEGIN,
+            TEMPLATE_ROUTINE_MAP_END
         }
 
-        public static void Log(String message)
+        public static List<Tuple<Int64, Action, String>> Logs { get; } = new List<Tuple<Int64, Action, String>>();
+        public static Boolean EnableLogger { get; set; }
+
+        public static void Log(Action action = Action.UNDEFINED, String message = null)
         {
-            if (Enable) {
-                Logs.Add(new Tuple<Int64, String>(DateTime.Now.Ticks, message));
+            if (EnableLogger) {
+                Logs.Add(new Tuple<Int64, Action, String>(DateTime.Now.Ticks, action, message));
             }
         }
     }

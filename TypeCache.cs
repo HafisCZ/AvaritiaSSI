@@ -23,13 +23,14 @@ namespace Avaritia
                 Cache(type);
             }
 
+            Logger.Log(Logger.Action.TYPECACHE_HIT, type.ToString());
             return Descriptors[type];
         }
 
         public static void Cache(params Type[] types)
         {
             foreach (Type type in types) {
-                Logger.Log(Logger.TYPECACHE_INSERT);
+                Logger.Log(Logger.Action.TYPECACHE_MAP, type.ToString());
 
                 PropertyDescriptorCollection descriptors = TypeDescriptor.GetProperties(type);
                 Descriptors.Add(type, Enumerable.Range(0, descriptors.Count).ToDictionary(i => descriptors[i].Name, i => descriptors[i]));

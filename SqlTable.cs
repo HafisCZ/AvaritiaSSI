@@ -14,10 +14,10 @@ namespace Avaritia
 
         public String Label { get; }
 
-        internal SqlTable(SqlConnector connector, String label, SqlTableTemplate template)
+        internal SqlTable(SqlConnector connector, SqlTableTemplate template)
         {
             Connector = connector;
-            Label = label;
+            Label = template.Label;
             Template = template;
         }
 
@@ -25,6 +25,24 @@ namespace Avaritia
         {
             SqlRequest request = new SqlRequest { Statement = String.Format("DELETE FROM [{0}]", Label) };
             return Connector.ExecuteNonQuerry(ref request, true);
+        }
+
+        public Type MapOnto<Type>(params Object[] values) where Type : ISqlUserRecord, new()
+        {
+            Type record = new Type();
+            foreach (KeyValuePair<Int32, PropertyDescriptor> kvp in TypeCache.GetDescriptors(typeof(Type)).ToDictionary(pair => Template.Columns[pair.Key].Ordinal, pair => pair.Value)) {
+                if (values[kvp.Key] != null) {
+                    if (kvp.Value?.PropertyType == typeof(DateTime?)) {
+                        kvp.Value?.SetValue(record, DateTime.Parse(values[kvp.Key] as String));
+                    } else if (kvp.Value?.PropertyType == typeof(Int32?)) {
+                        kvp.Value?.SetValue(record, Int32.Parse(values[kvp.Key] as String));
+                    } else {
+                        kvp.Value?.SetValue(record, values[kvp.Key]);
+                    }
+                }
+            }
+
+            return record;
         }
 
         public Boolean Select<Type>(out List<Type> records, String filter = null) where Type : ISqlUserRecord, new()
@@ -110,6 +128,11 @@ namespace Avaritia
             return Connector.ExecuteNonQuerry(ref request, true);
         }
 
+        public String[] GetRowLabels()
+        {
+            return Template.Columns.Keys.ToArray();
+        }
+
         internal String Parse(Object o)
         {
             if (o.GetType() == typeof(DateTime)) {
@@ -120,9 +143,6 @@ namespace Avaritia
                 return String.Format("'{0}'", o);
             }
         }
-
-        public void Begin() => Connector.TransactionPackBegin();
-        public void End() => Connector.TransactionPackBegin();
     }
 
     public interface ISqlUserRecord
