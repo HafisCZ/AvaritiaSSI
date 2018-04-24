@@ -13,7 +13,7 @@ namespace Avaritia
         private Dictionary<String, SqlTableTemplate> Tables { get; }
         private Dictionary<String, SqlRoutineTemplate> Routines { get; }
 
-        public SqlDatabase(String connectionString, String commonPrefix)
+        public SqlDatabase(String connectionString, String commonPrefix = "")
         {
             Connector = new SqlConnector(connectionString);
             Tables = CreateTemplates(commonPrefix);
@@ -88,11 +88,12 @@ namespace Avaritia
             }
         }
 
-        public Dictionary<String, SqlRoutine> GetRoutines()
+        public String[] GetRoutines(Boolean filterFunctions = true, Boolean filterProcedures = true)
         {
             try {
-                return Routines.ToDictionary(template => template.Key, template => new SqlRoutine(Connector, template.Value));
+                return Routines.Where(routine => (routine.Value.IsFunction && filterFunctions) || (routine.Value.IsProcedure && filterProcedures)).Select(template => template.Key).ToArray();
             } catch (Exception) {
+                Logger.Log();
                 return null;
             }
         }
@@ -108,11 +109,12 @@ namespace Avaritia
             }
         }
 
-        public Dictionary<String, SqlTable> GetTables()
+        public String[] GetTables()
         {
             try {
-                return Tables.ToDictionary(template => template.Key, template => new SqlTable(Connector, template.Value));
+                return Tables.Select(template => template.Key).ToArray();
             } catch (Exception) {
+                Logger.Log();
                 return null;
             }
         }

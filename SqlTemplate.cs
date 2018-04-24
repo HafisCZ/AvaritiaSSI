@@ -67,12 +67,13 @@ namespace Avaritia
     {
         public String Label { get; }
         public Boolean IsProcedure { get; }
-        public Boolean IsFunction { get => !IsProcedure; }
+        public Boolean IsFunction { get; }
 
         public SqlRoutineTemplate(String label, Boolean isProcedure)
         {
             Label = label;
             IsProcedure = isProcedure;
+            IsFunction = !isProcedure;
         }
     }
 }

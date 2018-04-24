@@ -27,24 +27,6 @@ namespace Avaritia
             return Connector.ExecuteNonQuerry(ref request, true);
         }
 
-        public Type MapOnto<Type>(params Object[] values) where Type : ISqlUserRecord, new()
-        {
-            Type record = new Type();
-            foreach (KeyValuePair<Int32, PropertyDescriptor> kvp in TypeCache.GetDescriptors(typeof(Type)).ToDictionary(pair => Template.Columns[pair.Key].Ordinal, pair => pair.Value)) {
-                if (values[kvp.Key] != null) {
-                    if (kvp.Value?.PropertyType == typeof(DateTime?)) {
-                        kvp.Value?.SetValue(record, DateTime.Parse(values[kvp.Key] as String));
-                    } else if (kvp.Value?.PropertyType == typeof(Int32?)) {
-                        kvp.Value?.SetValue(record, Int32.Parse(values[kvp.Key] as String));
-                    } else {
-                        kvp.Value?.SetValue(record, values[kvp.Key]);
-                    }
-                }
-            }
-
-            return record;
-        }
-
         public Boolean Select<Type>(out List<Type> records, String filter = null) where Type : ISqlUserRecord, new()
         {
             Dictionary<Int32, PropertyDescriptor> descriptors = TypeCache.GetDescriptors(typeof(Type)).ToDictionary(pair => Template.Columns[pair.Key].Ordinal, pair => pair.Value);
@@ -142,6 +124,24 @@ namespace Avaritia
             } else {
                 return String.Format("'{0}'", o);
             }
+        }
+
+        public static Type MapOnto<Type>(SqlTable table, params Object[] values) where Type : ISqlUserRecord, new()
+        {
+            Type record = new Type();
+            foreach (KeyValuePair<Int32, PropertyDescriptor> kvp in TypeCache.GetDescriptors(typeof(Type)).ToDictionary(pair => table.Template.Columns[pair.Key].Ordinal, pair => pair.Value)) {
+                if (values[kvp.Key] != null) {
+                    if (kvp.Value?.PropertyType == typeof(DateTime?)) {
+                        kvp.Value?.SetValue(record, DateTime.Parse(values[kvp.Key] as String));
+                    } else if (kvp.Value?.PropertyType == typeof(Int32?)) {
+                        kvp.Value?.SetValue(record, Int32.Parse(values[kvp.Key] as String));
+                    } else {
+                        kvp.Value?.SetValue(record, values[kvp.Key]);
+                    }
+                }
+            }
+
+            return record;
         }
     }
 
