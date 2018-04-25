@@ -11,29 +11,28 @@ namespace Avaritia
     {
         private static readonly Dictionary<Type, Dictionary<String, PropertyDescriptor>> Descriptors = new Dictionary<Type, Dictionary<String, PropertyDescriptor>>();
 
-        public static PropertyDescriptor TryGetDescriptor(Type type, String name)
+        public static PropertyDescriptor GetDescriptor(Type type, String propertyName)
         {
-            Dictionary<String, PropertyDescriptor> descriptors = GetDescriptors(type);
-            return descriptors.ContainsKey(name) ? descriptors[name] : null;
+            if (GetDescriptors(type).TryGetValue(propertyName, out PropertyDescriptor propertyDescriptor)) {
+                return propertyDescriptor;
+            } else {
+                Logger.Log(Logger.Action.TYPECACHE_FAIL, propertyName);
+
+                return null;
+            }
         }
 
         public static Dictionary<String, PropertyDescriptor> GetDescriptors(Type type)
         {
-            if (!Descriptors.ContainsKey(type)) {
-                Cache(type);
-            }
-
-            Logger.Log(Logger.Action.TYPECACHE_HIT, type.ToString());
-            return Descriptors[type];
-        }
-
-        public static void Cache(params Type[] types)
-        {
-            foreach (Type type in types) {
+            if (Descriptors.TryGetValue(type, out Dictionary<String, PropertyDescriptor> propertyDescriptors)) {
+                return propertyDescriptors;
+            } else {
                 Logger.Log(Logger.Action.TYPECACHE_MAP, type.ToString());
 
                 PropertyDescriptorCollection descriptors = TypeDescriptor.GetProperties(type);
                 Descriptors.Add(type, Enumerable.Range(0, descriptors.Count).ToDictionary(i => descriptors[i].Name, i => descriptors[i]));
+
+                return Descriptors[type];
             }
         }
     }

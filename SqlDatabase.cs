@@ -31,9 +31,15 @@ namespace Avaritia
             Dictionary<String, SqlRoutineTemplate> routine = new Dictionary<String, SqlRoutineTemplate>();
 
             SqlRequest request = new SqlRequest { Statement = String.Format("SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME LIKE '{0}%'", prefix) };
-            Connector.Execute(ref request, true);
+            Connector.Execute(ref request, false);
             foreach (Object[] row in request.Response) {
                 routine[row[0] as String] = new SqlRoutineTemplate(row[0] as String, (row[1] as String).Equals("PROCEDURE"));
+            }
+
+            request = new SqlRequest { Statement = String.Format("SELECT SPECIFIC_NAME, ORDINAL_POSITION, PARAMETER_MODE FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME LIKE '{0}%'", prefix) };
+            Connector.Execute(ref request, false);
+            foreach (Object[] row in request.Response) {
+                routine[row[0] as String].Params[row[1] as Int32? ?? 0] = row[2].Equals("IN");
             }
 
             Logger.Log(Logger.Action.TEMPLATE_ROUTINE_MAP_END);
@@ -46,31 +52,31 @@ namespace Avaritia
             Dictionary<String, SqlTableTemplate> tables = new Dictionary<String, SqlTableTemplate>();
 
             SqlRequest request = new SqlRequest { Statement = String.Format("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE '{0}%'", prefix) };
-            Connector.Execute(ref request, true);
+            Connector.Execute(ref request, false);
             foreach (Object[] row in request.Response) {
                 String label = row[0] as String;
                 tables.Add(label, new SqlTableTemplate(label));
             }
 
             request = new SqlRequest { Statement = String.Format("SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME LIKE '{0}%'", prefix) };
-            Connector.Execute(ref request, true);
+            Connector.Execute(ref request, false);
             foreach (Object[] row in request.Response) {
-                tables[row[0] as String].AddColumn(new SqlColumnTemplate(row[1] as String, (row[2] as Int32? ?? 0) - 1, false, row[3] as Boolean? ?? false, row[4] != null));
+                tables[row[0] as String].Add(new SqlColumnTemplate(row[1] as String, (row[2] as Int32? ?? 0) - 1, false, row[3] as Boolean? ?? false, row[4] != null));
             }
 
             request = new SqlRequest { Statement = "SELECT TC.TABLE_NAME, CCU.COLUMN_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC LEFT JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE CCU ON TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME WHERE TC.CONSTRAINT_TYPE = 'PRIMARY KEY'" };
-            Connector.Execute(ref request, true);
+            Connector.Execute(ref request, false);
             foreach (Object[] row in request.Response) {
                 if (tables.ContainsKey(row[0] as String)) {
-                    tables[row[0] as String].Columns[row[1] as String].MarkAsPrimary();
+                    tables[row[0] as String].Columns[row[1] as String].SetPrimary(true);
                 }
             }
 
             request = new SqlRequest { Statement = "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMNPROPERTY(object_id(TABLE_SCHEMA + '.' + TABLE_NAME), COLUMN_NAME, 'IsIdentity') = 1" };
-            Connector.Execute(ref request, true);
+            Connector.Execute(ref request, false);
             foreach (Object[] row in request.Response) {
                 if (tables.ContainsKey(row[0] as String)) {
-                    tables[row[0] as String].Columns[row[1] as String].MarkAsDefault();
+                    tables[row[0] as String].Columns[row[1] as String].SetDefault(true);
                 }
             }
 
@@ -118,8 +124,5 @@ namespace Avaritia
                 return null;
             }
         }
-
-        public void Begin() => Connector.TransactionPackBegin();
-        public void End() => Connector.TransactionPackEnd();
     }
 }

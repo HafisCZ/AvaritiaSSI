@@ -16,11 +16,13 @@ namespace Avaritia
             TRANSACTION_END_FAIL,
             CONNECTION_OPEN,
             CONNECTION_CLOSE,
+            CONNECTION_FAIL,
             TEMPLATE_NOTFOUND,
             TEMPLATE_MAP_BEGIN,
             TEMPLATE_MAP_END,
             TYPECACHE_HIT,
             TYPECACHE_MAP,
+            TYPECACHE_FAIL,
             EXECUTE_QUERRY,
             EXECUTE_NONQUERRY,
             TEMPLATE_ROUTINE_MAP_BEGIN,
@@ -28,6 +30,7 @@ namespace Avaritia
         }
 
         public static List<Tuple<Int64, Action, String>> Logs { get; } = new List<Tuple<Int64, Action, String>>();
+
         public static Boolean EnableLogger { get; set; }
 
         public static void Log(Action action = Action.UNDEFINED, String message = null)

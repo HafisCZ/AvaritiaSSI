@@ -8,28 +8,24 @@ namespace Avaritia
 {
     public sealed class SqlRoutine
     {
-        private SqlRoutineTemplate Template { get; }
-        private SqlConnector Connector { get; }
-
         public String Label { get; }
+        private SqlConnector Connector { get; }
+        private SqlRoutineTemplate Template { get; }
 
         internal SqlRoutine(SqlConnector connector, SqlRoutineTemplate template)
         {
             Connector = connector;
-            Label = template.Label;
             Template = template;
+            Label = template.Label;
         }
 
         public Boolean Execute(out SqlRequest request, params Object[] parameters)
         {
-            request = new SqlRequest {
-                Statement = Template.IsFunction ? 
-                String.Format("SELECT * FROM {0}({1})", Label, String.Join(",", parameters.Select(p => Parse(p)))) : 
-                String.Format("EXECUTE {0} {1}", Label, String.Join(" ", parameters.Select(p => Parse(p))))
-            };
-
-            return Template.IsProcedure ? Connector.ExecuteNonQuerry(ref request, false) : Connector.Execute(ref request, false);
+            request = new SqlRequest { Statement = Template.IsFunction ? String.Format("SELECT * FROM {0}({1})", Label, String.Join(",", parameters.Select(p => Parse(p)))) : String.Format("EXECUTE {0} {1}", Label, String.Join(" ", parameters.Select(p => Parse(p)))) };
+            return Connector.Execute(ref request, Template.IsProcedure);
         }
+
+        public Int32 GetParamCount() => Template.Params.Count;
 
         internal String Parse(Object o)
         {

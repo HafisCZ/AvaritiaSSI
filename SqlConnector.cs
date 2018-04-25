@@ -5,21 +5,29 @@ using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Transactions;
 
 namespace Avaritia
 {
     public sealed class SqlConnector : IDisposable
     {
         private SqlConnection Connection { get; }
-        private SqlTransaction Transaction { get; set; }
-        private Boolean Frozen { get; set; } = false;
 
         internal SqlConnector(String connectionString)
         {
-            Connection = new SqlConnection(connectionString);
-            Connection.Open();
+            try {
+                Connection = new SqlConnection(connectionString);
+                Connection.Open();
 
-            Logger.Log(Logger.Action.CONNECTION_OPEN, connectionString);
+                Logger.Log(Logger.Action.CONNECTION_OPEN, connectionString);
+            } catch (SqlException e) {
+                Logger.Log(Logger.Action.CONNECTION_FAIL, e.Message);
+            }
+        }
+
+        ~SqlConnector()
+        {
+            Dispose();
         }
 
         public void Dispose()
@@ -29,112 +37,54 @@ namespace Avaritia
             Logger.Log(Logger.Action.CONNECTION_CLOSE);
         }
 
-        public void TransactionPackBegin()
-        {
-            Frozen = true;
-        }
-
-        public void TransactionPackEnd()
-        {
-            Frozen = false;
-            try {
-                Transaction?.Commit();
-                Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
-                Transaction = null;
-            } catch (SqlException) {
-                Transaction?.Rollback();
-                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
-            } finally {
-                Transaction = null;
-            }
-        }
-
-        internal void SetTransaction(IsolationLevel isolationLevel)
-        {
-            if (Transaction == null) {
-                Transaction = Connection.BeginTransaction(isolationLevel);
-                Logger.Log(Logger.Action.TRANSACTION_BEGIN, isolationLevel.ToString());
-            }
-        }
-
-        internal Boolean Execute(ref SqlRequest request, Boolean useTransaction)
+        internal Boolean Execute(ref SqlRequest request, Boolean nonQuerry = false)
         {
             try {
-                if (useTransaction) {
-                    SetTransaction(IsolationLevel.Serializable);
-                }
+                using (TransactionScope transactionScope = new TransactionScope()) {
+                    Logger.Log(Logger.Action.TRANSACTION_BEGIN, Transaction.Current.IsolationLevel.ToString());
 
-                Logger.Log(Logger.Action.EXECUTE_QUERRY, request.Statement);
+                    using (SqlCommand command = new SqlCommand(request.Statement, Connection)) {
+                        if (nonQuerry) {
+                            Logger.Log(Logger.Action.EXECUTE_NONQUERRY, request.Statement);
 
-                using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction))
-                using (SqlDataReader reader = command.ExecuteReader(CommandBehavior.SequentialAccess)) {
-                    request.Headers = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
-                    request.Response = new List<Object[]>();
-                    while (reader.Read()) {
-                        Object[] data = new Object[reader.FieldCount];
-                        reader.GetValues(data);
-                        request.Response.Add(data);
+                            request.RecordsAffected = command.ExecuteNonQuery();
+                        } else {
+                            Logger.Log(Logger.Action.EXECUTE_QUERRY, request.Statement);
+
+                            using (SqlDataReader reader = command.ExecuteReader(CommandBehavior.SequentialAccess)) {
+                                request.Headers = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+                                request.Response = new List<Object[]>();
+                                while (reader.Read()) {
+                                    Object[] data = new Object[reader.FieldCount];
+                                    reader.GetValues(data);
+                                    request.Response.Add(data);
+                                }
+                            }
+                        }
                     }
-                }
 
-                if (!Frozen) {
-                    Transaction?.Commit();
+                    transactionScope.Complete();
+
                     Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
                 }
 
                 return true;
-            } catch (SqlException) {
-                Transaction?.Rollback();
-                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
-            } finally {
-                if (!Frozen) {
-                    Transaction = null;
-                }
+            } catch (TransactionAbortedException e) {
+                Logger.Log(Logger.Action.TRANSACTION_END_FAIL, e.Message);
+
+                return false;
+            } catch (ApplicationException e) {
+                throw e;
             }
-
-            return false;
-        }
-
-        internal Boolean ExecuteNonQuerry(ref SqlRequest request, Boolean useTransaction)
-        {
-            try {
-                if (useTransaction) {
-                    SetTransaction(IsolationLevel.Serializable);
-                }
-
-                Logger.Log(Logger.Action.EXECUTE_NONQUERRY, request.Statement);
-
-                using (SqlCommand command = new SqlCommand(request.Statement, Connection, Transaction)) {
-                    request.RecordsAffected = command.ExecuteNonQuery();
-                }
-
-                if (!Frozen) {
-                    Transaction?.Commit();
-                    Logger.Log(Logger.Action.TRANSACTION_END_SUCCESS);
-                }
-
-                return true;
-            } catch (SqlException e) {
-                Transaction?.Rollback();
-                Logger.Log(Logger.Action.TRANSACTION_END_FAIL);
-            } finally {
-                if (!Frozen) {
-                    Transaction = null;
-                }
-            }
-
-            return false;
         }
     }
 
     public sealed class SqlRequest
     {
         public String Statement { get; set; }
-
-        public Int32 RecordsAffected { get; set; }
-
-        public List<Object[]> Response { get; set; }
-        public List<String> Headers { get; set; }
+        public Int32 RecordsAffected { get; internal set; }
+        public List<Object[]> Response { get; internal set; }
+        public List<String> Headers { get; internal set; }
     }
 
     public sealed class SqlConnectionStringBuilder

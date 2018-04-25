@@ -10,70 +10,50 @@ namespace Avaritia
     {
         public String Label { get; }
         public Int32 Ordinal { get; }
-        public Boolean PrimaryKey { get; private set; }
-        public Boolean AllowNull { get; }
+        public Boolean AllowsNull { get; }
+        public Boolean IsPrimary { get; private set; }
         public Boolean HasDefault { get; private set; }
-
-        [Obsolete("Unused")]
-        public String DbType { get; }
-        [Obsolete("Unused")]
-        public Int32? Length { get; }
 
         public SqlColumnTemplate(String label, Int32 ordinal, Boolean primaryKey, Boolean allowNull, Boolean hasDefault)
         {
             Label = label;
             Ordinal = ordinal;
-            PrimaryKey = primaryKey;
-            AllowNull = allowNull;
+            IsPrimary = primaryKey;
+            AllowsNull = allowNull;
             HasDefault = hasDefault;
         }
 
-        public void MarkAsPrimary()
-        {
-            PrimaryKey = true;
-        }
-
-        public void MarkAsDefault()
-        {
-            HasDefault = true;
-        }
+        public void SetPrimary(Boolean isPrimary) => IsPrimary = isPrimary;
+        public void SetDefault(Boolean hasDefault) => HasDefault = hasDefault;
     }
 
     internal sealed class SqlTableTemplate
     {
-        public Dictionary<String, SqlColumnTemplate> Columns { get; }
         public String Label { get; }
+        public Dictionary<String, SqlColumnTemplate> Columns { get; } = new Dictionary<String, SqlColumnTemplate>();
 
         public SqlTableTemplate(String label)
         {
             Label = label;
-            Columns = new Dictionary<String, SqlColumnTemplate>();
         }
 
-        public void AddColumn(SqlColumnTemplate column)
-        {
-            Columns.Add(column.Label, column);
-        }
-
-        public SqlColumnTemplate this[String column]
-        {
-            get {
-                return Columns[column];
-            }
-        }
+        public void Add(SqlColumnTemplate column) => Columns.Add(column.Label, column);
     }
 
     internal sealed class SqlRoutineTemplate
     {
         public String Label { get; }
-        public Boolean IsProcedure { get; }
         public Boolean IsFunction { get; }
+        public Boolean IsProcedure { get; }
+        public Dictionary<Int32, Boolean> Params { get; }
 
         public SqlRoutineTemplate(String label, Boolean isProcedure)
         {
             Label = label;
             IsProcedure = isProcedure;
             IsFunction = !isProcedure;
+
+            Params = new Dictionary<Int32, Boolean>();
         }
     }
 }
